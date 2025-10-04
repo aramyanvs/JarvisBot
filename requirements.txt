@@ -1,0 +1,14 @@
+pyrogram==2.0.106
+tgcrypto
+python-dotenv
+openai>=1.35.0
+asyncpg
+httpx
+beautifulsoup4
+readability-lxml
+lxml
+python-docx
+pdfminer.six
+pandas
+openpyxl
+duckduckgo-search
