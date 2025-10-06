@@ -28,7 +28,8 @@ SYS = f"Ты Jarvis — ассистент на {LANG}. Отвечай крат�
 app = Client("jarvis_bot", api_id=API_ID, api_hash=API_HASH, bot_token=BOT_TOKEN)
 oc = OpenAI(api_key=OPENAI_KEY)
 
-async def db_conn(): return await asyncpg.connect(DB_URL)
+async def db_conn(): 
+    return await asyncpg.connect(DB_URL)
 
 async def init_db():
     c = await db_conn()
@@ -43,7 +44,11 @@ async def get_memory(uid:int):
 
 async def save_memory(uid:int, mem):
     c = await db_conn()
-    await c.execute("insert into users(user_id,memory) values($1,$2) on conflict(user_id) do update set memory=excluded.memory", uid, mem)
+    await c.execute(
+        "insert into users(user_id,memory) values($1,$2) "
+        "on conflict(user_id) do update set memory=excluded.memory",
+        uid, mem
+    )
     await c.close()
 
 async def reset_memory(uid:int):
@@ -74,7 +79,8 @@ def need_web(q:str):
     if "http://" in t or "https://" in t: return True
     return False
 
-def extract_urls(q:str): return re.findall(r"https?://\S+", q)
+def extract_urls(q:str): 
+    return re.findall(r"https?://\S+", q)
 
 async def fetch_urls(urls, limit_chars=12000):
     out = []
@@ -82,7 +88,8 @@ async def fetch_urls(urls, limit_chars=12000):
         try:
             t = await fetch_url(u, limit=4000)
             if t: out.append(t)
-        except: pass
+        except:
+            pass
     return "\n\n".join(out)[:limit_chars]
 
 async def search_and_fetch(query:str, hits:int=2, limit_chars:int=12000):
@@ -93,13 +100,22 @@ async def search_and_fetch(query:str, hits:int=2, limit_chars:int=12000):
     if not links: return ""
     return await fetch_urls(links, limit_chars=limit_chars)
 
-def read_txt(p): return open(p,"r",encoding="utf-8",errors="ignore").read()
-def read_pdf(p): return pdf_text(p) or ""
-def read_docx(p): d=Docx(p); return "\n".join([x.text for x in d.paragraphs])
+def read_txt(p): 
+    return open(p,"r",encoding="utf-8",errors="ignore").read()
+
+def read_pdf(p): 
+    return pdf_text(p) or ""
+
+def read_docx(p): 
+    d=Docx(p); return "\n".join([x.text for x in d.paragraphs])
+
 def read_table(p):
-    if p.lower().endswith((".xlsx",".xls")): df=pd.read_excel(p)
-    else: df=pd.read_csv(p)
+    if p.lower().endswith((".xlsx",".xls")): 
+        df=pd.read_excel(p)
+    else: 
+        df=pd.read_csv(p)
     b=io.StringIO(); df.head(80).to_string(b); return b.getvalue()
+
 def read_any(p):
     pl=p.lower()
     if pl.endswith((".txt",".md",".log")): return read_txt(p)
@@ -252,7 +268,8 @@ async def on_chat(c:Client,m:Message):
     await save_memory(uid, hist[-MEM_LIMIT:])
     await m.reply_text(reply)
 
-async def health(request): return web.Response(text="ok")
+async def health(request): 
+    return web.Response(text="ok")
 
 async def run_http_server():
     port = int(os.getenv("PORT", "8000"))
