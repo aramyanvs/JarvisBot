@@ -12,3 +12,4 @@ pdfminer.six
 pandas
 openpyxl
 duckduckgo-search
+aiohttp
