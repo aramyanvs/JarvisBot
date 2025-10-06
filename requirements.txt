@@ -1,7 +1,7 @@
 pyrogram==2.0.106
 tgcrypto
 python-dotenv
-openai>=1.35.0
+openai==2.2.0
 asyncpg
 httpx
 beautifulsoup4
