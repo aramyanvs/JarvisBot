@@ -31,41 +31,41 @@ oc = OpenAI(api_key=OPENAI_KEY)
 
 async def db_conn(): return await asyncpg.connect(DB_URL)
 async def init_db():
-    c=await db_conn()
+    c = await db_conn()
     await c.execute("create table if not exists users (user_id bigint primary key, memory jsonb default '[]'::jsonb)")
     await c.close()
 async def get_memory(uid:int):
-    c=await db_conn()
-    r=await c.fetchrow("select memory from users where user_id=$1", uid)
+    c = await db_conn()
+    r = await c.fetchrow("select memory from users where user_id=$1", uid)
     await c.close()
     return r["memory"] if r else []
 async def save_memory(uid:int, mem):
-    c=await db_conn()
+    c = await db_conn()
     await c.execute("insert into users(user_id,memory) values($1,$2) on conflict(user_id) do update set memory=excluded.memory", uid, mem)
     await c.close()
 async def reset_memory(uid:int):
-    c=await db_conn()
+    c = await db_conn()
     await c.execute("delete from users where user_id=$1", uid)
     await c.close()
 
 def ask_openai(messages, temperature=0.3, max_tokens=800):
-    r=oc.chat.completions.create(model=MODEL, messages=messages, temperature=temperature, max_tokens=max_tokens)
+    r = oc.chat.completions.create(model=MODEL, messages=messages, temperature=temperature, max_tokens=max_tokens)
     return r.choices[0].message.content.strip()
 
 async def fetch_url(url:str, limit=20000):
-    async with httpx.AsyncClient(follow_redirects=True, headers={"User-Agent":UA}, timeout=25) as cl:
-        r=await cl.get(url)
-    ct=r.headers.get("content-type","").lower()
+    async with httpx.AsyncClient(follow_redirects=True, headers={"User-Agent": UA}, timeout=25) as cl:
+        r = await cl.get(url)
+    ct = r.headers.get("content-type","").lower()
     if "text/html" in ct or "<html" in r.text[:500].lower():
-        doc=Document(r.text); html=doc.summary()
-        soup=BeautifulSoup(html,"lxml"); text=soup.get_text("\n", strip=True)
+        doc = Document(r.text); html = doc.summary()
+        soup = BeautifulSoup(html,"lxml"); text = soup.get_text("\n", strip=True)
     else:
-        text=r.text
+        text = r.text
     return re.sub(r"\n{3,}", "\n\n", text)[:limit]
 
 def need_web(q:str):
-    t=q.lower()
-    keys=["сейчас","сегодня","новост","курс","цена","сколько стоит","когда будет","последн","обнов","релиз","погода","расписан","матч","акции","доступно","вышел","итог"]
+    t = q.lower()
+    keys = ["сейчас","сегодня","новост","курс","цена","сколько стоит","когда будет","последн","обнов","релиз","погода","расписан","матч","акции","доступно","вышел","итог"]
     if any(k in t for k in keys): return True
     if re.search(r"\b20(2[4-9]|3\d)\b", t): return True
     if "http://" in t or "https://" in t: return True
@@ -74,16 +74,16 @@ def need_web(q:str):
 def extract_urls(q:str): return re.findall(r"https?://\S+", q)
 
 async def fetch_urls(urls, limit_chars=12000):
-    out=[]
+    out = []
     for u in urls[:3]:
         try:
-            t=await fetch_url(u, limit=4000)
+            t = await fetch_url(u, limit=4000)
             if t: out.append(t)
         except: pass
     return "\n\n".join(out)[:limit_chars]
 
 async def search_and_fetch(query:str, hits:int=2, limit_chars:int=12000):
-    links=[]
+    links = []
     with DDGS() as ddg:
         for r in ddg.text(query, max_results=hits, safesearch="moderate"):
             if r and r.get("href"): links.append(r["href"])
@@ -98,7 +98,7 @@ def read_table(p):
     else: df=pd.read_csv(p)
     b=io.StringIO(); df.head(80).to_string(b); return b.getvalue()
 def read_any(p):
-    pl=p.lower()
+    pl = p.lower()
     if pl.endswith((".txt",".md",".log")): return read_txt(p)
     if pl.endswith(".pdf"): return read_pdf(p)
     if pl.endswith(".docx"): return read_docx(p)
@@ -106,12 +106,9 @@ def read_any(p):
     return read_txt(p)
 
 def tts_to_mp3(text:str):
-    fn=tempfile.mktemp(suffix=".mp3")
+    fn = tempfile.mktemp(suffix=".mp3")
     with oc.audio.speech.with_streaming_response.create(
-        model="gpt-4o-mini-tts",
-        voice="alloy",
-        input=text,
-        format="mp3"
+        model="gpt-4o-mini-tts", voice="alloy", input=text, format="mp3"
     ) as resp:
         resp.stream_to_file(fn)
     return fn
@@ -136,52 +133,56 @@ async def cmd_ping(update:Update, ctx:ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text("pong")
 
 async def on_text(update:Update, ctx:ContextTypes.DEFAULT_TYPE):
-    uid=update.effective_user.id
-    text=(update.message.text or update.message.caption or "").strip()
-    urls=extract_urls(text)
-    web_snip=""
+    uid = update.effective_user.id
+    text = (update.message.text or update.message.caption or "").strip()
+    urls = extract_urls(text)
+    web_snip = ""
     if urls:
-        try: web_snip=await fetch_urls(urls)
-        except: web_snip=""
+        try: web_snip = await fetch_urls(urls)
+        except: web_snip = ""
     elif need_web(text):
-        try: web_snip=await search_and_fetch(text, hits=2)
-        except: web_snip=""
-    hist=await get_memory(uid)
-    msgs=[{"role":"system","content":SYS}]
+        try: web_snip = await search_and_fetch(text, hits=2)
+        except: web_snip = ""
+    hist = await get_memory(uid)
+    msgs = [{"role":"system","content":SYS}]
     if web_snip: msgs.append({"role":"system","content":"Актуальная сводка из интернета:\n"+web_snip})
-    msgs+=hist+[{"role":"user","content":text}]
-    reply=await asyncio.to_thread(ask_openai, msgs)
+    msgs += hist + [{"role":"user","content":text}]
+    reply = await asyncio.to_thread(ask_openai, msgs)
     hist.append({"role":"user","content":text})
     hist.append({"role":"assistant","content":reply})
     await save_memory(uid, hist[-MEM_LIMIT:])
     await update.message.reply_text(reply)
 
+application: Application | None = None
+
 async def health(request): return web.Response(text="ok")
 
-async def setup_webhook(app):
-    if not BASE_URL: return
-    url=f"{BASE_URL}/tgwebhook"
-    await app.bot.set_webhook(url, drop_pending_updates=True)
+async def tg_webhook(request):
+    data = await request.json()
+    upd = Update.de_json(data, application.bot)
+    await application.process_update(upd)
+    return web.Response(text="ok")
 
-def build_app():
-    from telegram.ext import ApplicationBuilder, CommandHandler, MessageHandler, filters
-    application = ApplicationBuilder().token(BOT_TOKEN).build()
-    application.add_handler(CommandHandler("start", cmd_start))
-    application.add_handler(CommandHandler("ping", cmd_ping))
-    application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, on_text))
-    return application
+def build_app() -> Application:
+    app = ApplicationBuilder().token(BOT_TOKEN).build()
+    app.add_handler(CommandHandler("start", cmd_start))
+    app.add_handler(CommandHandler("ping", cmd_ping))
+    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, on_text))
+    return app
 
 async def main():
+    global application
     await init_db()
     application = build_app()
     aio = web.Application()
     aio.add_routes([web.get("/health", health)])
-    aio.add_routes([web.post("/tgwebhook", application.webhook_handler())])
+    aio.add_routes([web.post("/tgwebhook", tg_webhook)])
     runner = web.AppRunner(aio); await runner.setup()
     site = web.TCPSite(runner, "0.0.0.0", PORT); await site.start()
-    await setup_webhook(application)
+    if BASE_URL:
+        await application.bot.set_webhook(f"{BASE_URL}/tgwebhook", drop_pending_updates=True)
     print("READY")
     await asyncio.Event().wait()
 
-if __name__=="__main__":
+if __name__ == "__main__":
     asyncio.run(main())
