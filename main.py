@@ -230,7 +230,7 @@ async def migrate(request):
     c=await asyncpg.connect(DB_URL)
     try:
         await c.execute("BEGIN")
-        await c.execute("UPDATE users SET memory='[]' WHERE memory IS NULL OR trim(memory)='' OR NOT (memory IS JSON)")
+        await c.execute("UPDATE users SET memory='[]' WHERE memory IS NULL OR memory::text='' OR NOT (memory IS JSON)")
         await c.execute("ALTER TABLE users ALTER COLUMN memory TYPE jsonb USING COALESCE(NULLIF(trim(memory),''),'[]')::jsonb, ALTER COLUMN memory SET DEFAULT '[]'::jsonb")
         await c.execute("COMMIT")
     except Exception as e:
