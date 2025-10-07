@@ -25,7 +25,7 @@ LANG = os.getenv("LANGUAGE", "ru")
 UA = "Mozilla/5.0"
 SYS = f"Ты Jarvis — ассистент на {LANG}. Отвечай кратко и по делу. Если нужна свежая информация, используй сводку, приложенную в system."
 PORT = int(os.getenv("PORT", "10000"))
-BASE_URL = os.getenv("PUBLIC_URL", "").rstrip("/")  # поставим Render URL вида https://xxx.onrender.com
+BASE_URL = os.getenv("PUBLIC_URL", "").rstrip("/")
 
 oc = OpenAI(api_key=OPENAI_KEY)
 
@@ -105,11 +105,6 @@ def read_any(p):
     if pl.endswith((".csv",".xlsx",".xls")): return read_table(p)
     return read_txt(p)
 
-def transcribe(path:str):
-    with open(path,"rb") as f:
-        r=oc.audio.transcriptions.create(model="whisper-1", file=f)
-    return r.text or ""
-
 def tts_to_mp3(text:str):
     fn=tempfile.mktemp(suffix=".mp3")
     with oc.audio.speech.with_streaming_response.create(
@@ -121,7 +116,7 @@ def tts_to_mp3(text:str):
         resp.stream_to_file(fn)
     return fn
 
-async def set_menu(app:Application):
+async def set_menu(app):
     await app.bot.set_my_commands([
         BotCommand("ping","Проверка"),
         BotCommand("read","Прочитать сайт"),
@@ -137,94 +132,10 @@ async def cmd_start(update:Update, ctx:ContextTypes.DEFAULT_TYPE):
     await set_menu(ctx.application)
     await update.message.reply_text("Готов. Меню установлено. Пиши вопрос.")
 
-async def cmd_setmenu(update:Update, ctx:ContextTypes.DEFAULT_TYPE):
-    if update.effective_user.id != ADMIN_ID: return
-    await set_menu(ctx.application)
-    await update.message.reply_text("Меню обновлено")
-
 async def cmd_ping(update:Update, ctx:ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text("pong")
 
-async def cmd_reset(update:Update, ctx:ContextTypes.DEFAULT_TYPE):
-    if update.effective_user.id != ADMIN_ID: return
-    await reset_memory(update.effective_user.id)
-    await update.message.reply_text("Память очищена")
-
-async def cmd_read(update:Update, ctx:ContextTypes.DEFAULT_TYPE):
-    parts=update.message.text.split(maxsplit=1)
-    if len(parts)<2: return await update.message.reply_text("Формат: /read URL")
-    try:
-        raw=await fetch_url(parts[1])
-    except Exception as e:
-        return await update.message.reply_text(f"Ошибка: {e}")
-    sys=[{"role":"system","content":"Суммаризируй текст кратко и структурировано."}]
-    out=ask_openai(sys+[{"role":"user","content":raw[:16000]}]) if len(raw)>1800 else raw
-    await update.message.reply_text(out[:4000])
-
-async def cmd_readfile(update:Update, ctx:ContextTypes.DEFAULT_TYPE):
-    if not update.message.reply_to_message or not (update.message.reply_to_message.document or update.message.reply_to_message.audio or update.message.reply_to_message.voice):
-        return await update.message.reply_text("Ответь на файл командой /readfile")
-    f=update.message.reply_to_message
-    file = f.document or f.audio or f.voice
-    p=await ctx.bot.get_file(file.file_id)
-    dl=await p.download_to_drive()
-    loop=asyncio.get_event_loop()
-    text=await loop.run_in_executor(None, read_any, dl)
-    await update.message.reply_text(text[:4000] or "пусто")
-
-async def cmd_summarize_file(update:Update, ctx:ContextTypes.DEFAULT_TYPE):
-    if not update.message.reply_to_message or not update.message.reply_to_message.document:
-        return await update.message.reply_text("Ответь на файл командой /summarize_file")
-    p=await ctx.bot.get_file(update.message.reply_to_message.document.file_id)
-    dl=await p.download_to_drive()
-    loop=asyncio.get_event_loop()
-    text=await loop.run_in_executor(None, read_any, dl)
-    sys=[{"role":"system","content":"Суммаризируй текст кратко и структурировано."}]
-    out=ask_openai(sys+[{"role":"user","content":text[:16000]}])
-    await update.message.reply_text(out[:4000])
-
-async def cmd_translate_file(update:Update, ctx:ContextTypes.DEFAULT_TYPE):
-    parts=update.message.text.split(maxsplit=1)
-    if len(parts)<2: return await update.message.reply_text("Формат: /translate_file en (ответ на файл)")
-    if not update.message.reply_to_message or not update.message.reply_to_message.document:
-        return await update.message.reply_text("Ответь на файл командой /translate_file en")
-    p=await ctx.bot.get_file(update.message.reply_to_message.document.file_id)
-    dl=await p.download_to_drive()
-    loop=asyncio.get_event_loop()
-    text=await loop.run_in_executor(None, read_any, dl)
-    sys=[{"role":"system","content":f"Переведи на язык: {parts[1].strip()}"}]
-    out=ask_openai(sys+[{"role":"user","content":text[:16000]}])
-    await update.message.reply_text(out[:4000])
-
-async def cmd_ask_file(update:Update, ctx:ContextTypes.DEFAULT_TYPE):
-    parts=update.message.text.split(maxsplit=1)
-    if len(parts)<2: return await update.message.reply_text("Формат: /ask_file вопрос (ответ на файл)")
-    if not update.message.reply_to_message or not update.message.reply_to_message.document:
-        return await update.message.reply_text("Ответь на файл командой /ask_file вопрос")
-    q=parts[1]
-    p=await ctx.bot.get_file(update.message.reply_to_message.document.file_id)
-    dl=await p.download_to_drive()
-    loop=asyncio.get_event_loop()
-    text=await loop.run_in_executor(None, read_any, dl)
-    msgs=[{"role":"system","content":"Отвечай только по тексту файла, кратко и точно."},{"role":"user","content":f"Текст файла:\n{text[:12000]}\n\nВопрос: {q}"}]
-    ans=ask_openai(msgs,0.2,600)
-    await update.message.reply_text(ans[:4000])
-
-async def cmd_say(update:Update, ctx:ContextTypes.DEFAULT_TYPE):
-    if not VOICE_MODE: return await update.message.reply_text("Голос отключен")
-    parts=update.message.text.split(maxsplit=1)
-    if len(parts)<2: return await update.message.reply_text("Формат: /say текст")
-    mp3=tts_to_mp3(parts[1])
-    try:
-        with open(mp3, "rb") as f:
-            await update.message.reply_audio(InputFile(f, filename="jarvis.mp3"))
-    finally:
-        try: os.remove(mp3)
-        except: pass
-
 async def on_text(update:Update, ctx:ContextTypes.DEFAULT_TYPE):
-    if not update.message or update.message.text is None and update.message.caption is None:
-        return
     uid=update.effective_user.id
     text=(update.message.text or update.message.caption or "").strip()
     urls=extract_urls(text)
@@ -247,25 +158,17 @@ async def on_text(update:Update, ctx:ContextTypes.DEFAULT_TYPE):
 
 async def health(request): return web.Response(text="ok")
 
-async def setup_webhook(app:Application):
-    if not BASE_URL:
-        return
+async def setup_webhook(app):
+    if not BASE_URL: return
     url=f"{BASE_URL}/tgwebhook"
     await app.bot.set_webhook(url, drop_pending_updates=True)
 
 def build_app():
+    from telegram.ext import ApplicationBuilder, CommandHandler, MessageHandler, filters
     application = ApplicationBuilder().token(BOT_TOKEN).build()
     application.add_handler(CommandHandler("start", cmd_start))
-    application.add_handler(CommandHandler("setmenu", cmd_setmenu))
     application.add_handler(CommandHandler("ping", cmd_ping))
-    application.add_handler(CommandHandler("reset", cmd_reset))
-    application.add_handler(CommandHandler("read", cmd_read))
-    application.add_handler(CommandHandler("readfile", cmd_readfile))
-    application.add_handler(CommandHandler("summarize_file", cmd_summarize_file))
-    application.add_handler(CommandHandler("translate_file", cmd_translate_file))
-    application.add_handler(CommandHandler("ask_file", cmd_ask_file))
-    application.add_handler(CommandHandler("say", cmd_say))
-    application.add_handler(MessageHandler(filters.ALL & ~filters.COMMAND, on_text))
+    application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, on_text))
     return application
 
 async def main():
