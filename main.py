@@ -93,7 +93,10 @@ async def get_memory(uid:int):
 async def save_memory(uid:int, mem):
     c = await db_conn()
     try:
-        await c.execute("INSERT INTO users(user_id,memory) VALUES($1,$2::jsonb) ON CONFLICT(user_id) DO UPDATE SET memory=EXCLUDED.memory", uid, json.dumps(mem, ensure_ascii=False))
+        await c.execute(
+            "INSERT INTO users(user_id,memory) VALUES($1,$2::jsonb) ON CONFLICT(user_id) DO UPDATE SET memory=EXCLUDED.memory",
+            uid, json.dumps(mem, ensure_ascii=False)
+        )
     finally:
         await c.close()
 
@@ -207,7 +210,7 @@ def tts_to_mp3(text:str):
         model="gpt-4o-mini-tts",
         voice="alloy",
         input=text,
-        format="mp3"
+        response_format="mp3"
     ) as resp:
         resp.stream_to_file(fn)
     return fn
@@ -233,6 +236,11 @@ async def on_button(update:Update, ctx:ContextTypes.DEFAULT_TYPE):
     await q.answer()
     if q.data == "start":
         await q.edit_message_text("Пиши сообщение или пришли файл/голосовое.")
+    if q.data.startswith("mode_"):
+        uid = q.from_user.id
+        m = {"mode_expert":"expert","mode_joker":"joker","mode_philos":"philos","mode_friendly":"friendly"}.get(q.data, "friendly")
+        await set_setting(uid, "mode", m)
+        await q.edit_message_text(f"Режим установлен: {m}")
 
 async def cmd_ping(update:Update, ctx:ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text("pong")
@@ -254,16 +262,6 @@ async def cmd_mode(update:Update, ctx:ContextTypes.DEFAULT_TYPE):
     uid = update.effective_user.id
     await set_setting(uid, "mode", mode)
     await update.message.reply_text(f"Режим установлен: {mode}")
-
-async def on_mode_button(update:Update, ctx:ContextTypes.DEFAULT_TYPE):
-    q = update.callback_query
-    await q.answer()
-    uid = q.from_user.id
-    data = q.data
-    if data.startswith("mode_"):
-        m = {"mode_expert":"expert","mode_joker":"joker","mode_philos":"philos","mode_friendly":"friendly"}.get(data, "friendly")
-        await set_setting(uid, "mode", m)
-        await q.edit_message_text(f"Режим установлен: {m}")
 
 async def cmd_reset(update:Update, ctx:ContextTypes.DEFAULT_TYPE):
     uid = update.effective_user.id
@@ -403,8 +401,7 @@ def build_app():
     app.add_handler(CommandHandler("reset", cmd_reset))
     app.add_handler(CommandHandler("read", cmd_read))
     app.add_handler(CommandHandler("say", cmd_say))
-    app.add_handler(CallbackQueryHandler(on_button, pattern="^start$"))
-    app.add_handler(CallbackQueryHandler(on_mode_button, pattern="^mode_"))
+    app.add_handler(CallbackQueryHandler(on_button, pattern="^(start|mode_.*)$"))
     app.add_handler(MessageHandler(filters.VOICE | filters.AUDIO, on_voice))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, on_text))
     return app
