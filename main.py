@@ -1,6 +1,7 @@
-import os, re, json, io, tempfile, asyncio, math, time
+import os, re, json, io, tempfile, asyncio, math
 from dotenv import load_dotenv
 load_dotenv()
+
 import asyncpg, httpx, pandas as pd
 from bs4 import BeautifulSoup
 from readability import Document
@@ -24,8 +25,9 @@ BASE_URL = os.getenv("PUBLIC_URL", "").rstrip("/")
 PORT = int(os.getenv("PORT", "10000"))
 VOICE_MODE = os.getenv("VOICE_MODE", "true").lower() == "true"
 MIGRATION_KEY = os.getenv("MIGRATION_KEY", "jarvis-fix-123")
+
 UA = "Mozilla/5.0"
-SYSTEM_PREFIX = f"Ты Jarvis — ассистент на {LANG}. Отвечай по делу, кратко и структурированно."
+SYSTEM_PREFIX = f"Ты Jarvis — ассистент на {LANG}. Отвечай кратко, чётко и по делу."
 
 oc = OpenAI(api_key=OPENAI_KEY)
 application = None
@@ -40,15 +42,17 @@ async def init_db():
             CREATE TABLE IF NOT EXISTS users (
                 user_id BIGINT PRIMARY KEY,
                 memory JSONB DEFAULT '[]'::jsonb
-            )""")
+            );
+        """)
         await c.execute("""
             CREATE TABLE IF NOT EXISTS user_settings (
                 user_id BIGINT PRIMARY KEY,
                 mode TEXT DEFAULT 'friendly',
                 tts BOOLEAN DEFAULT true,
-                language TEXT DEFAULT $1,
+                language TEXT DEFAULT 'ru',
                 last_seen TIMESTAMP DEFAULT NOW()
-            )""", LANG)
+            );
+        """)
         await c.execute("""
             CREATE TABLE IF NOT EXISTS vectors (
                 id SERIAL PRIMARY KEY,
@@ -56,7 +60,8 @@ async def init_db():
                 content TEXT,
                 embedding JSONB,
                 created_at TIMESTAMP DEFAULT NOW()
-            )""")
+            );
+        """)
     finally:
         await c.close()
 
@@ -98,7 +103,7 @@ async def get_settings(uid:int):
         r = await c.fetchrow("SELECT mode, tts, language FROM user_settings WHERE user_id=$1", uid)
         if r:
             return {"mode": r["mode"], "tts": r["tts"], "language": r["language"]}
-        await c.execute("INSERT INTO user_settings(user_id,mode,tts,language) VALUES($1,'friendly',true,$2) ON CONFLICT DO NOTHING", uid, LANG)
+        await c.execute("INSERT INTO user_settings(user_id,mode,tts,language) VALUES($1,'friendly',true,'ru') ON CONFLICT DO NOTHING", uid)
         return {"mode":"friendly", "tts":True, "language":LANG}
     finally:
         await c.close()
@@ -149,6 +154,10 @@ def ask_openai(messages, temperature=0.3, max_tokens=800):
     r = oc.chat.completions.create(model=MODEL, messages=messages, temperature=temperature, max_tokens=max_tokens)
     return r.choices[0].message.content.strip()
 
+async def embed_text(text:str):
+    r = oc.embeddings.create(model=EMBED_MODEL, input=text)
+    return r.data[0].embedding if hasattr(r,"data") else []
+
 async def fetch_url(url:str, limit=20000):
     async with httpx.AsyncClient(follow_redirects=True, headers={"User-Agent":UA}, timeout=25) as cl:
         r = await cl.get(url)
@@ -164,11 +173,8 @@ async def fetch_url(url:str, limit=20000):
 
 def need_web(q:str):
     t = q.lower()
-    keys = ["сейчас","сегодня","новост","курс","цена","погода","сколько","когда","вышел","итог","обнов"]
-    if any(k in t for k in keys): return True
-    if re.search(r"\b20(2[4-9]|3\d)\b", t): return True
-    if "http://" in t or "https://" in t: return True
-    return False
+    keys = ["сейчас","сегодня","новост","курс","цена","погода","обнов","вышел","итог","сколько","когда","расписан","матч","акции"]
+    return any(k in t for k in keys) or "http" in t or re.search(r"\b20(2[4-9]|3\d)\b", t) is not None
 
 def extract_urls(q:str): return re.findall(r"https?://\S+", q)
 
@@ -188,21 +194,7 @@ async def search_and_fetch(query:str, hits:int=3, limit_chars:int=12000):
             for r in ddg.text(query, max_results=hits, safesearch="moderate"):
                 if r and r.get("href"): links.append(r["href"])
     except: pass
-    if not links: return ""
-    return await fetch_urls(links, limit_chars)
-
-def read_file(path):
-    p = path.lower()
-    if p.endswith((".txt",".md",".log")):
-        return open(path,"r",encoding="utf-8",errors="ignore").read()
-    if p.endswith(".pdf"):
-        return pdf_text(path) or ""
-    if p.endswith(".docx"):
-        d = Docx(path); return "\n".join([x.text for x in d.paragraphs])
-    if p.endswith((".csv",".xlsx",".xls")):
-        df = pd.read_excel(path) if p.endswith((".xlsx",".xls")) else pd.read_csv(path)
-        b = io.StringIO(); df.head(80).to_string(b); return b.getvalue()
-    return open(path,"r",encoding="utf-8",errors="ignore").read()
+    return await fetch_urls(links, limit_chars) if links else ""
 
 def transcribe(path:str):
     with open(path,"rb") as f:
@@ -211,22 +203,14 @@ def transcribe(path:str):
 
 def tts_to_mp3(text:str):
     fn = tempfile.mktemp(suffix=".mp3")
-    r = oc.audio.speech.create(model="gpt-4o-mini-tts", voice="alloy", input=text, format="mp3")
-    try:
-        data = r.read() if hasattr(r,"read") else getattr(r,"data",None) or r
-        if isinstance(data, bytes):
-            with open(fn,"wb") as f: f.write(data)
-        elif isinstance(data, str):
-            with open(fn,"wb") as f: f.write(data.encode())
-        else:
-            with open(fn,"wb") as f: f.write(r)
-    except Exception:
-        with open(fn,"wb") as f: f.write(b"")
+    with oc.audio.speech.with_streaming_response.create(
+        model="gpt-4o-mini-tts",
+        voice="alloy",
+        input=text,
+        format="mp3"
+    ) as resp:
+        resp.stream_to_file(fn)
     return fn
-
-async def embed_text(text:str):
-    r = oc.embeddings.create(model=EMBED_MODEL, input=text)
-    return r.data[0].embedding if hasattr(r,"data") else (r["data"][0]["embedding"] if isinstance(r,dict) else [])
 
 async def set_menu(app):
     await app.bot.set_my_commands([
@@ -234,21 +218,21 @@ async def set_menu(app):
         BotCommand("ping","проверка"),
         BotCommand("read","прочитать сайт"),
         BotCommand("say","озвучить текст"),
-        BotCommand("reset","сбросить память"),
+        BotCommand("reset","очистить память"),
         BotCommand("mode","сменить режим"),
-        BotCommand("profile","профиль"),
+        BotCommand("profile","профиль")
     ])
 
 async def cmd_start(update:Update, ctx:ContextTypes.DEFAULT_TYPE):
     await set_menu(ctx.application)
     kb = InlineKeyboardMarkup([[InlineKeyboardButton("🚀 Начать", callback_data="start")]])
-    await update.message.reply_text("Jarvis онлайн. Пиши.", reply_markup=kb)
+    await update.message.reply_text("Я Jarvis. Готов к работе.", reply_markup=kb)
 
 async def on_button(update:Update, ctx:ContextTypes.DEFAULT_TYPE):
     q = update.callback_query
     await q.answer()
     if q.data == "start":
-        await q.edit_message_text("Пиши вопрос или пришли файл/фото.")
+        await q.edit_message_text("Пиши сообщение или пришли файл/голосовое.")
 
 async def cmd_ping(update:Update, ctx:ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text("pong")
@@ -261,10 +245,10 @@ async def cmd_profile(update:Update, ctx:ContextTypes.DEFAULT_TYPE):
 async def cmd_mode(update:Update, ctx:ContextTypes.DEFAULT_TYPE):
     parts = (update.message.text or "").split(maxsplit=1)
     if len(parts) < 2:
-        kb = InlineKeyboardMarkup([[InlineKeyboardButton("🧠 Эксперт", callback_data="mode_expert"),
-                                    InlineKeyboardButton("😎 Шутник", callback_data="mode_joker")],
-                                   [InlineKeyboardButton("🧘 Философ", callback_data="mode_philos"),
-                                    InlineKeyboardButton("❤️ Дружелюбный", callback_data="mode_friendly")]])
+        kb = InlineKeyboardMarkup([
+            [InlineKeyboardButton("🧠 Эксперт", callback_data="mode_expert"), InlineKeyboardButton("😎 Шутник", callback_data="mode_joker")],
+            [InlineKeyboardButton("🧘 Философ", callback_data="mode_philos"), InlineKeyboardButton("❤️ Дружелюбный", callback_data="mode_friendly")]
+        ])
         return await update.message.reply_text("Выбери режим:", reply_markup=kb)
     mode = parts[1].strip().lower()
     uid = update.effective_user.id
@@ -288,18 +272,20 @@ async def cmd_reset(update:Update, ctx:ContextTypes.DEFAULT_TYPE):
 
 async def cmd_read(update:Update, ctx:ContextTypes.DEFAULT_TYPE):
     parts = (update.message.text or "").split(maxsplit=1)
-    if len(parts)<2: return await update.message.reply_text("Формат: /read URL")
+    if len(parts)<2:
+        return await update.message.reply_text("Формат: /read URL")
     try:
         raw = await fetch_url(parts[1])
     except Exception as e:
         return await update.message.reply_text(f"Ошибка: {e}")
-    sys = [{"role":"system","content":"Суммаризируй текст кратко и структурировано."}]
+    sys = [{"role":"system","content":"Суммаризируй текст кратко и структурированно."}]
     out = ask_openai(sys+[{"role":"user","content":raw[:16000]}]) if len(raw)>1800 else raw
     await update.message.reply_text(out[:4000])
 
 async def cmd_say(update:Update, ctx:ContextTypes.DEFAULT_TYPE):
     parts = (update.message.text or "").split(maxsplit=1)
-    if len(parts)<2: return await update.message.reply_text("Формат: /say текст")
+    if len(parts)<2:
+        return await update.message.reply_text("Формат: /say текст")
     mp3 = tts_to_mp3(parts[1].strip())
     try:
         with open(mp3,"rb") as f:
@@ -314,36 +300,10 @@ async def on_voice(update:Update, ctx:ContextTypes.DEFAULT_TYPE):
     if not v: return
     f = await ctx.bot.get_file(v.file_id)
     path = await f.download_to_drive()
-    loop = asyncio.get_event_loop()
-    text = await loop.run_in_executor(None, transcribe, path)
-    if not text: return await update.message.reply_text("Пусто")
+    text = await asyncio.to_thread(transcribe, path)
+    if not text:
+        return await update.message.reply_text("Не удалось распознать голос.")
     uid = update.effective_user.id
-    hist = await get_memory(uid)
-    s = await get_settings(uid)
-    msgs = [{"role":"system","content":SYSTEM_PREFIX + f" Режим: {s['mode']}"}] + hist + [{"role":"user","content":text}]
-    try:
-        reply = await asyncio.to_thread(ask_openai, msgs)
-    except Exception as e:
-        reply = f"Ошибка модели: {e}"
-    hist += [{"role":"user","content":text},{"role":"assistant","content":reply}]
-    await save_memory(uid, hist[-MEM_LIMIT:])
-    if s["tts"]:
-        mp3 = tts_to_mp3(reply)
-        try:
-            with open(mp3,"rb") as f:
-                await update.message.reply_audio(InputFile(f, filename="jarvis.mp3"))
-        finally:
-            try: os.remove(mp3)
-            except: pass
-    else:
-        await update.message.reply_text(reply)
-
-async def on_photo(update:Update, ctx:ContextTypes.DEFAULT_TYPE):
-    ph = update.message.photo[-1]
-    f = await ctx.bot.get_file(ph.file_id)
-    path = await f.download_to_drive()
-    uid = update.effective_user.id
-    text = f"Пользователь прислал изображение: файл {os.path.basename(path)}. Проанализируй и дай краткий вывод."
     hist = await get_memory(uid)
     s = await get_settings(uid)
     msgs = [{"role":"system","content":SYSTEM_PREFIX + f" Режим: {s['mode']}"}] + hist + [{"role":"user","content":text}]
@@ -413,7 +373,7 @@ async def on_text(update:Update, ctx:ContextTypes.DEFAULT_TYPE):
     else:
         await update.message.reply_text(reply)
 
-async def health(request):
+async def health(request): 
     return web.Response(text="ok")
 
 async def migrate(request):
@@ -446,7 +406,6 @@ def build_app():
     app.add_handler(CallbackQueryHandler(on_button, pattern="^start$"))
     app.add_handler(CallbackQueryHandler(on_mode_button, pattern="^mode_"))
     app.add_handler(MessageHandler(filters.VOICE | filters.AUDIO, on_voice))
-    app.add_handler(MessageHandler(filters.PHOTO, on_photo))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, on_text))
     return app
 
