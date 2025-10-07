@@ -25,6 +25,7 @@ UA="Mozilla/5.0"
 SYS=f"Ты Jarvis — ассистент на {LANG}. Отвечай кратко и по делу. Если нужна свежая информация, используй сводку, приложенную в system."
 PORT=int(os.getenv("PORT","10000"))
 BASE_URL=os.getenv("PUBLIC_URL","").rstrip("/")
+VOICE_MODE=os.getenv("VOICE_MODE","true").lower()=="true"
 
 oc=OpenAI(api_key=OPENAI_KEY)
 application: Application|None=None
@@ -101,11 +102,25 @@ def read_any(p):
     if pl.endswith((".csv",".xlsx",".xls")): return read_table(p)
     return read_txt(p)
 
+def transcribe(path:str):
+    with open(path,"rb") as f:
+        r=oc.audio.transcriptions.create(model="whisper-1", file=f)
+    return (r.text or "").strip()
+
+def tts_to_mp3(text:str):
+    fn=tempfile.mktemp(suffix=".mp3")
+    with oc.audio.speech.with_streaming_response.create(
+        model="gpt-4o-mini-tts", voice="alloy", input=text, format="mp3"
+    ) as resp:
+        resp.stream_to_file(fn)
+    return fn
+
 async def set_menu(app:Application):
     await app.bot.set_my_commands([
         BotCommand("start","Запуск"),
         BotCommand("ping","Проверка"),
         BotCommand("read","Прочитать сайт"),
+        BotCommand("say","Озвучить текст"),
         BotCommand("reset","Сбросить память"),
     ])
 
@@ -138,6 +153,39 @@ async def cmd_read(update:Update, ctx:ContextTypes.DEFAULT_TYPE):
     out=ask_openai(sys+[{"role":"user","content":raw[:16000]}]) if len(raw)>1800 else raw
     await update.message.reply_text(out[:4000])
 
+async def cmd_say(update:Update, ctx:ContextTypes.DEFAULT_TYPE):
+    if not VOICE_MODE: return await update.message.reply_text("Голос отключен")
+    parts=(update.message.text or "").split(maxsplit=1)
+    if len(parts)<2: return await update.message.reply_text("Формат: /say текст")
+    mp3=tts_to_mp3(parts[1].strip())
+    try:
+        with open(mp3,"rb") as f:
+            await update.message.reply_audio(InputFile(f, filename="jarvis.mp3"))
+    finally:
+        try: os.remove(mp3)
+        except: pass
+
+async def on_voice(update:Update, ctx:ContextTypes.DEFAULT_TYPE):
+    if not VOICE_MODE: return
+    v=update.message.voice or update.message.audio
+    if not v: return
+    f=await ctx.bot.get_file(v.file_id)
+    p=await f.download_to_drive()
+    loop=asyncio.get_event_loop()
+    text=await loop.run_in_executor(None, transcribe, p)
+    if not text: return await update.message.reply_text("Не удалось распознать голос.")
+    uid=update.effective_user.id
+    hist=await get_memory(uid)
+    msgs=[{"role":"system","content":SYS}, *hist, {"role":"user","content":text}]
+    try:
+        reply=await asyncio.to_thread(ask_openai, msgs)
+    except Exception as e:
+        reply=f"⚠️ Ошибка ответа модели: {e}"
+    hist.append({"role":"user","content":text})
+    hist.append({"role":"assistant","content":reply})
+    await save_memory(uid, hist[-MEM_LIMIT:])
+    await update.message.reply_text(reply)
+
 async def on_text(update:Update, ctx:ContextTypes.DEFAULT_TYPE):
     uid=update.effective_user.id
     text=(update.message.text or update.message.caption or "").strip()
@@ -154,7 +202,10 @@ async def on_text(update:Update, ctx:ContextTypes.DEFAULT_TYPE):
     msgs=[{"role":"system","content":SYS}]
     if web_snip: msgs.append({"role":"system","content":"Актуальная сводка из интернета:\n"+web_snip})
     msgs+=hist+[{"role":"user","content":text}]
-    reply=await asyncio.to_thread(ask_openai, msgs)
+    try:
+        reply=await asyncio.to_thread(ask_openai, msgs)
+    except Exception as e:
+        reply=f"⚠️ Ошибка ответа модели: {e}"
     hist.append({"role":"user","content":text})
     hist.append({"role":"assistant","content":reply})
     await save_memory(uid, hist[-MEM_LIMIT:])
@@ -165,11 +216,14 @@ async def health(request): return web.Response(text="ok")
 async def tg_webhook(request):
     try:
         data=await request.json()
+        print("UPDATE IN:", list(data.keys()), data.get("update_id"), flush=True)
         upd=Update.de_json(data, application.bot)
         await application.process_update(upd)
         return web.Response(text="ok")
     except Exception as e:
-        return web.Response(text=str(e))
+        import traceback
+        print("WEBHOOK ERROR:", e, traceback.format_exc(), flush=True)
+        return web.Response(status=200, text="ok")
 
 def build_app()->Application:
     app=ApplicationBuilder().token(BOT_TOKEN).build()
@@ -177,7 +231,9 @@ def build_app()->Application:
     app.add_handler(CommandHandler("ping", cmd_ping))
     app.add_handler(CommandHandler("reset", cmd_reset))
     app.add_handler(CommandHandler("read", cmd_read))
+    app.add_handler(CommandHandler("say", cmd_say))
     app.add_handler(CallbackQueryHandler(on_button, pattern="^start$"))
+    app.add_handler(MessageHandler(filters.VOICE | filters.AUDIO, on_voice))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, on_text))
     return app
 
