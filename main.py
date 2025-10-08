@@ -311,16 +311,13 @@ async def on_voice(update:Update, ctx:ContextTypes.DEFAULT_TYPE):
         reply = f"Ошибка модели: {e}"
     hist += [{"role":"user","content":text},{"role":"assistant","content":reply}]
     await save_memory(uid, hist[-MEM_LIMIT:])
-    if s["tts"]:
-        mp3 = tts_to_mp3(reply)
-        try:
-            with open(mp3,"rb") as f:
-                await update.message.reply_audio(InputFile(f, filename="jarvis.mp3"))
-        finally:
-            try: os.remove(mp3)
-            except: pass
-    else:
-        await update.message.reply_text(reply)
+    mp3 = tts_to_mp3(reply)
+    try:
+        with open(mp3,"rb") as f:
+            await update.message.reply_audio(InputFile(f, filename="jarvis.mp3"))
+    finally:
+        try: os.remove(mp3)
+        except: pass
 
 async def semantic_search(uid:int, query:str, top=3):
     qemb = await embed_text(query)
@@ -360,16 +357,7 @@ async def on_text(update:Update, ctx:ContextTypes.DEFAULT_TYPE):
     await save_memory(uid, hist[-MEM_LIMIT:])
     emb = await embed_text(text)
     await save_vector(uid, text, emb)
-    if s["tts"]:
-        mp3 = tts_to_mp3(reply)
-        try:
-            with open(mp3,"rb") as f:
-                await update.message.reply_audio(InputFile(f, filename="jarvis.mp3"))
-        finally:
-            try: os.remove(mp3)
-            except: pass
-    else:
-        await update.message.reply_text(reply)
+    await update.message.reply_text(reply)
 
 async def health(request): 
     return web.Response(text="ok")
