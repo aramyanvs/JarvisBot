@@ -48,3 +48,7 @@ typing-extensions==4.15.0
 typing-inspection==0.4.2
 tzdata==2025.2
 yarl==1.22.0
+duckduckgo-search
+readability-lxml
+beautifulsoup4
+httpx
