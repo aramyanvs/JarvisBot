@@ -8,6 +8,7 @@ from readability import Document
 from duckduckgo_search import DDGS
 from aiohttp import web
 from openai import OpenAI
+from webbrain import inject_web_context
 
 from pdfminer.high_level import extract_text as pdf_text
 from docx import Document as Docx
