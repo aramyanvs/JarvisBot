@@ -9,6 +9,7 @@ CONCURRENCY = 3
 MAX_PER_SOURCE = 4000
 MAX_BUNDLE = 12000
 
+
 async def _fetch_html(client, url):
     try:
         r = await client.get(url, follow_redirects=True, headers={"User-Agent": UA})
@@ -25,13 +26,15 @@ async def _fetch_html(client, url):
     except:
         return ""
 
+
 async def fetch_url(url: str, limit=MAX_PER_SOURCE):
     async with httpx.AsyncClient(timeout=TIMEOUT) as client:
         t = await _fetch_html(client, url)
         return t[:limit] if t else ""
 
+
 async def fetch_urls(urls, limit_chars=MAX_BUNDLE):
-    urls = [u for u in urls if isinstance(u, str) and u.startswith(("http://","https://"))]
+    urls = [u for u in urls if isinstance(u, str) and u.startswith(("http://", "https://"))]
     if not urls:
         return ""
     out = []
@@ -45,6 +48,7 @@ async def fetch_urls(urls, limit_chars=MAX_BUNDLE):
     bundle = "\n\n".join([t for t in out if t])
     return bundle[:limit_chars]
 
+
 async def search_and_fetch(query: str, hits: int = 4, limit_chars: int = MAX_BUNDLE):
     links = []
     try:
@@ -56,11 +60,17 @@ async def search_and_fetch(query: str, hits: int = 4, limit_chars: int = MAX_BUN
         links = []
     return await fetch_urls(links, limit_chars) if links else ""
 
+
 def need_web(text: str) -> bool:
+    """Возвращает True, если нужно использовать интернет"""
+    always = os.getenv("ALWAYS_WEB", "false").lower() == "true"
+    if always:
+        return True
     t = (text or "").strip()
-    if not t: return False
-    if t.startswith("/"): return False
+    if not t or t.startswith("/"):
+        return False
     return True
+
 
 def install():
     import main
@@ -68,5 +78,7 @@ def install():
     main.fetch_url = fetch_url
     main.fetch_urls = fetch_urls
     main.search_and_fetch = search_and_fetch
+    if os.getenv("ALWAYS_WEB", "false").lower() == "true":
+        print("[WebLayer] Internet mode: ALWAYS ON")
 
 install()
