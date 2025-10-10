@@ -1,55 +1,42 @@
-import os, re, asyncio, httpx
+import re, httpx
 from bs4 import BeautifulSoup
 from readability import Document
 from duckduckgo_search import DDGS
+import main
 
-UA = "Mozilla/5.0 (JarvisWebLayer)"
-TIMEOUT = httpx.Timeout(20.0, connect=10.0)
-CONCURRENCY = 3
-MAX_PER_SOURCE = 4000
-MAX_BUNDLE = 12000
+UA = "Mozilla/5.0"
+MAX_SNIPPET = 12000
 
+def _extract_urls(q: str):
+    return re.findall(r"https?://\S+", q or "")
 
-async def _fetch_html(client, url):
+def _fetch_url(u: str, limit: int = 4000) -> str:
     try:
-        r = await client.get(url, follow_redirects=True, headers={"User-Agent": UA})
+        with httpx.Client(follow_redirects=True, headers={"User-Agent": UA}, timeout=20) as cl:
+            r = cl.get(u)
         ct = (r.headers.get("content-type") or "").lower()
-        text = r.text
-        if "text/html" in ct or "<html" in text[:500].lower():
-            html = Document(text).summary()
+        if "text/html" in ct or "<html" in r.text[:500].lower():
+            html = Document(r.text).summary()
             soup = BeautifulSoup(html, "lxml")
-            out = soup.get_text("\n", strip=True)
+            text = soup.get_text("\n", strip=True)
         else:
-            out = text
-        out = re.sub(r"\n{3,}", "\n\n", out)
-        return out[:MAX_PER_SOURCE]
+            text = r.text
+        text = re.sub(r"\n{3,}", "\n\n", text)
+        return text[:limit]
     except:
         return ""
 
-
-async def fetch_url(url: str, limit=MAX_PER_SOURCE):
-    async with httpx.AsyncClient(timeout=TIMEOUT) as client:
-        t = await _fetch_html(client, url)
-        return t[:limit] if t else ""
-
-
-async def fetch_urls(urls, limit_chars=MAX_BUNDLE):
-    urls = [u for u in urls if isinstance(u, str) and u.startswith(("http://", "https://"))]
-    if not urls:
-        return ""
+def _fetch_urls(urls, limit_chars=12000) -> str:
     out = []
-    sem = asyncio.Semaphore(CONCURRENCY)
-    async with httpx.AsyncClient(timeout=TIMEOUT) as client:
-        async def run(u):
-            async with sem:
-                out.append(await _fetch_html(client, u))
-        tasks = [asyncio.create_task(run(u)) for u in urls[:6]]
-        await asyncio.gather(*tasks, return_exceptions=True)
-    bundle = "\n\n".join([t for t in out if t])
-    return bundle[:limit_chars]
+    for u in urls[:3]:
+        t = _fetch_url(u, limit=4000)
+        if t:
+            out.append(t)
+        if sum(len(x) for x in out) >= limit_chars:
+            break
+    return "\n\n".join(out)[:limit_chars]
 
-
-async def search_and_fetch(query: str, hits: int = 4, limit_chars: int = MAX_BUNDLE):
+def _search_and_fetch(query: str, hits: int = 2, limit_chars: int = 12000) -> str:
     links = []
     try:
         with DDGS() as ddg:
@@ -57,28 +44,43 @@ async def search_and_fetch(query: str, hits: int = 4, limit_chars: int = MAX_BUN
                 if r and r.get("href"):
                     links.append(r["href"])
     except:
-        links = []
-    return await fetch_urls(links, limit_chars) if links else ""
+        pass
+    return _fetch_urls(links, limit_chars) if links else ""
 
+def _last_user_text(messages):
+    for m in reversed(messages or []):
+        if isinstance(m, dict) and m.get("role") == "user":
+            c = m.get("content", "")
+            if isinstance(c, str):
+                return c.strip()
+    return ""
 
-def need_web(text: str) -> bool:
-    """Возвращает True, если нужно использовать интернет"""
-    always = os.getenv("ALWAYS_WEB", "false").lower() == "true"
-    if always:
-        return True
-    t = (text or "").strip()
-    if not t or t.startswith("/"):
-        return False
-    return True
+_orig_ask = getattr(main, "ask_openai")
 
+def ask_openai_with_web(messages, temperature=0.3, max_tokens=800):
+    q = _last_user_text(messages)
+    web_snip = ""
+    urls = _extract_urls(q)
+    if urls:
+        web_snip = _fetch_urls(urls)
+    else:
+        if q:
+            web_snip = _search_and_fetch(q, hits=2, limit_chars=MAX_SNIPPET)
+    if web_snip:
+        sys = {"role": "system", "content": "Актуальная сводка из интернета:\n" + web_snip}
+        msgs = []
+        inserted = False
+        for m in messages:
+            if not inserted and m.get("role") == "system":
+                msgs.append(m)
+                msgs.append(sys)
+                inserted = True
+            else:
+                msgs.append(m)
+        if not inserted:
+            msgs = [sys] + list(messages)
+        return _orig_ask(msgs, temperature=temperature, max_tokens=max_tokens)
+    return _orig_ask(messages, temperature=temperature, max_tokens=max_tokens)
 
-def install():
-    import main
-    main.need_web = need_web
-    main.fetch_url = fetch_url
-    main.fetch_urls = fetch_urls
-    main.search_and_fetch = search_and_fetch
-    if os.getenv("ALWAYS_WEB", "false").lower() == "true":
-        print("[WebLayer] Internet mode: ALWAYS ON")
-
-install()
+main.ask_openai = ask_openai_with_web
+print("[WebLayer] Internet mode: ALWAYS ON", flush=True)
