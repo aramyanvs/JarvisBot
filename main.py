@@ -417,11 +417,17 @@ async def tg_webhook(request):
     try:
         data = await request.json()
     except Exception:
-        return web.Response(text="bad json", status=400)
-    upd = Update.de_json(data, application.bot)
-    asyncio.create_task(application.process_update(upd))
-    return web.json_response({"ok": True})
-    
+        return web.Response(text="ok")
+    try:
+        upd = Update.de_json(data, application.bot)
+        asyncio.create_task(application.process_update(upd))
+    except Exception:
+        pass
+    return web.Response(text="ok")
+
+async def health(request):
+    return web.Response(text="ok")
+
 def routes_app():
     app = web.Application()
     app.router.add_get("/health", health)
@@ -435,16 +441,13 @@ async def start_http():
     add_handlers(application)
     await application.initialize()
     await application.start()
-
     aio = routes_app()
     runner = web.AppRunner(aio)
     await runner.setup()
     site = web.TCPSite(runner, "0.0.0.0", int(os.getenv("PORT", 8080)))
     await site.start()
-
     if BASE_URL:
         await application.bot.set_webhook(f"{BASE_URL}/tgwebhook", drop_pending_updates=True)
-
     print("READY", flush=True)
     print("WEBHOOK:", f"{BASE_URL}/tgwebhook", flush=True)
     await asyncio.Event().wait()
