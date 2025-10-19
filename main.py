@@ -421,8 +421,7 @@ async def tg_webhook(request):
     upd = Update.de_json(data, application.bot)
     asyncio.create_task(application.process_update(upd))
     return web.json_response({"ok": True})
-    return web.Response(text="ok")
-
+    
 def routes_app():
     app = web.Application()
     app.router.add_get("/health", health)
