@@ -424,47 +424,31 @@ async def tg_webhook(request):
     return web.Response(text="ok")
 
 def routes_app():
-    app=web.Application()
+    app = web.Application()
     app.router.add_get("/health", health)
     app.router.add_post("/tgwebhook", tg_webhook)
     return app
 
-def add_handlers(app:Application):
-    app.add_handler(CommandHandler("start", cmd_start))
-    app.add_handler(CommandHandler("reset", cmd_reset))
-    app.add_handler(CommandHandler("setlang", cmd_setlang))
-    app.add_handler(CommandHandler("personality", cmd_personality))
-    app.add_handler(CommandHandler("voicetrans", cmd_voicetrans))
-    app.add_handler(CommandHandler("weather", cmd_weather))
-    app.add_handler(CommandHandler("currency", cmd_currency))
-    app.add_handler(CommandHandler("news", cmd_news))
-    app.add_handler(CommandHandler("fact", cmd_fact))
-    app.add_handler(CommandHandler("image", cmd_image))
-    app.add_handler(MessageHandler(filters.Document.ALL, on_document))
-    app.add_handler(MessageHandler(filters.VOICE | filters.AUDIO, on_voice))
-    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, on_text))
-
 async def start_http():
     global application
     await init_db()
-    application=build_app()
+    application = build_app()
     add_handlers(application)
     await application.initialize()
     await application.start()
-    aio=routes_app()
-    runner=web.AppRunner(aio); await runner.setup()
-    site=web.TCPSite(runner,"0.0.0.0",PORT); await site.start()
+
+    aio = routes_app()
+    runner = web.AppRunner(aio)
+    await runner.setup()
+    site = web.TCPSite(runner, "0.0.0.0", int(os.getenv("PORT", 8080)))
+    await site.start()
+
     if BASE_URL:
         await application.bot.set_webhook(f"{BASE_URL}/tgwebhook", drop_pending_updates=True)
-    print("READY"); print("WEBHOOK:", f"{BASE_URL}/tgwebhook", flush=True)
 
-async def main():
-    await start_http()
+    print("READY", flush=True)
+    print("WEBHOOK:", f"{BASE_URL}/tgwebhook", flush=True)
     await asyncio.Event().wait()
 
-def run():
-    loop=asyncio.get_event_loop()
-    loop.run_until_complete(main())
-
-if __name__=="__main__":
-    run()
+if __name__ == "__main__":
+    asyncio.run(start_http())
