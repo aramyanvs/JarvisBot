@@ -415,14 +415,12 @@ async def on_voice(update:Update, context:ContextTypes.DEFAULT_TYPE):
 
 async def tg_webhook(request):
     try:
-        data=await request.json()
+        data = await request.json()
     except Exception:
-        return web.Response(text="bad json",status=400)
-    upd=Update.de_json(data, application.bot)
-    request.app.loop.create_task(application.process_update(upd))
-    return web.Response(text="ok")
-
-async def health(request):
+        return web.Response(text="bad json", status=400)
+    upd = Update.de_json(data, application.bot)
+    asyncio.create_task(application.process_update(upd))
+    return web.json_response({"ok": True})
     return web.Response(text="ok")
 
 def routes_app():
