@@ -419,13 +419,16 @@ async def tg_webhook(request):
     try:
         data = await request.json()
     except Exception:
-        return web.Response(text="ok")
+        return web.json_response({"ok": False, "err": "bad json"}, status=400)
     try:
         upd = Update.de_json(data, application.bot)
         asyncio.create_task(application.process_update(upd))
-    except Exception:
-        pass
-    return web.Response(text="ok")
+    except Exception as e:
+        try:
+            print(f"[WEBHOOK_ERR] {e}")
+        except:
+            pass
+    return web.json_response({"ok": True})
 
 async def health(request):
     return web.Response(text="ok")
@@ -436,38 +439,57 @@ def routes_app():
     app.router.add_post("/tgwebhook", tg_webhook)
     return app
 
-from aiohttp import web
-from telegram import Update
+def add_handlers(app: Application):
+    app.add_handler(CommandHandler("start", cmd_start))
+    app.add_handler(CommandHandler("reset", cmd_reset))
+    app.add_handler(CommandHandler("setlang", cmd_setlang))
+    app.add_handler(CommandHandler("personality", cmd_personality))
+    app.add_handler(CommandHandler("voicetrans", cmd_voicetrans))
+    app.add_handler(CommandHandler("weather", cmd_weather))
+    app.add_handler(CommandHandler("currency", cmd_currency))
+    app.add_handler(CommandHandler("news", cmd_news))
+    app.add_handler(CommandHandler("fact", cmd_fact))
+    app.add_handler(CommandHandler("image", cmd_image))
+    app.add_handler(MessageHandler(filters.Document.ALL, on_document))
+    app.add_handler(MessageHandler(filters.VOICE | filters.AUDIO, on_voice))
+    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, on_text))
 
-async def tg_webhook(request):
-    data = await request.json()
-    upd = Update.de_json(data, application.bot)
-    request.app.loop.create_task(application.process_update(upd))
-    return web.Response(text="ok")
-
-async def health(request):
-    return web.Response(text="ok")
+async def build_app():
+    global application
+    if application is None:
+        application = Application.builder().token(TELEGRAM_BOT_TOKEN).concurrent_updates(True).build()
+        add_handlers(application)
+    aio = routes_app()
+    aio["tg_app"] = application
+    return aio
 
 async def start_http():
-    await init_db()
     global application
-    application = build_app()
+    await init_db()
+    application = await build_app()
     await application.initialize()
     await application.start()
-    app = web.Application()
-    app.router.add_get("/health", health)
-    app.router.add_post("/tgwebhook", tg_webhook)
-    base_url = BASE_URL.rstrip("/") if BASE_URL else ""
-    if base_url:
+    aio = routes_app()
+    runner = web.AppRunner(aio)
+    await runner.setup()
+    port = int(os.getenv("PORT", "8080"))
+    site = web.TCPSite(runner, "0.0.0.0", port)
+    await site.start()
+    try:
+        base_url = BASE_URL.rstrip("/")
         await application.bot.set_webhook(f"{base_url}/tgwebhook", drop_pending_updates=True)
-    return app
+    except Exception as e:
+        try:
+            print(f"[SET_WEBHOOK_ERR] {e}")
+        except:
+            pass
+    return aio
+
+async def main():
+    await start_http()
+    while True:
+        await asyncio.sleep(3600)
 
 def run():
-    loop = asyncio.new_event_loop()
-    asyncio.set_event_loop(loop)
-    aio_app = loop.run_until_complete(start_http())
-    port = int(os.getenv("PORT", 8080))
-    web.run_app(aio_app, host="0.0.0.0", port=port)
-
-if __name__ == "__main__":
-    run()
+    loop = asyncio.get_event_loop()
+    loop.run_until_complete(main())
