@@ -33,13 +33,15 @@ http_timeout=20.0
 async def db_conn():
     return await asyncpg.connect(DB_URL)
 
-async def init_db():
     c=await db_conn()
-    await c.execute("create table if not exists users (user_id bigint primary key, lang text default $1, persona text default 'assistant', voice boolean default true, translate_to text default null, voicetrans boolean default false)", LANG)
-    await c.execute("create table if not exists memory (user_id bigint references users(user_id) on delete cascade, role text, content text, ts timestamptz default now())")
+    await c.execute(
+        f"create table if not exists users (user_id bigint primary key, lang text default '{LANG}', persona text default 'assistant', voice boolean default true, translate_to text default null, voicetrans boolean default false)"
+    )
+    await c.execute(
+        "create table if not exists memory (user_id bigint references users(user_id) on delete cascade, role text, content text, ts timestamptz default now())"
+    )
     await c.close()
-
-async def get_user(uid:int)->Dict[str,Any]:
+    
     c=await db_conn()
     row=await c.fetchrow("select user_id,lang,persona,voice,translate_to,voicetrans from users where user_id=$1", uid)
     if not row:
