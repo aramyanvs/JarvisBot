@@ -464,7 +464,7 @@ def run():
     loop = asyncio.new_event_loop()
     asyncio.set_event_loop(loop)
     aio_app = loop.run_until_complete(start_http())
-    port = int(os.getenv("PORT", PORT))
+    port = int(os.getenv("PORT", 8080))
     web.run_app(aio_app, host="0.0.0.0", port=port)
 
 if __name__ == "__main__":
