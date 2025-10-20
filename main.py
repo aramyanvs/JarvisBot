@@ -28,13 +28,11 @@ MEM_LIMIT = int(os.getenv("MEMORY_LIMIT", "1500"))
 VOICE_MODE = os.getenv("VOICE_MODE", "true").lower() == "true"
 PORT = int(os.getenv("PORT", "8080"))
 
-try:
-    import tiktoken
-    enc = tiktoken.get_encoding("cl100k_base")
-except Exception:
-    class _Enc:
-        def encode(self, s): return s.encode("utf-8")
-    enc = _Enc()
+class _Enc:
+    def encode(self, s: str) -> bytes:
+        return s.encode("utf-8", errors="ignore")
+
+enc = _Enc()
 
 aclient = AsyncOpenAI(api_key=OPENAI_API_KEY, timeout=30)
 application: Optional[Application] = None
