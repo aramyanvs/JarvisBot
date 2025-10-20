@@ -86,7 +86,15 @@ async def set_user(uid: int, **kw):
     c = await db_conn()
     await c.execute(q, *vals)
     await c.close()
-
+    
+def token_len(s: str) -> int:
+    try:
+        import tiktoken
+        enc = tiktoken.encoding_for_model(OPENAI_MODEL)
+        return len(enc.encode(s))
+    except Exception:
+        return max(1, len(s) // 4)
+        
 async def get_memory(uid: int) -> List[Dict[str, str]]:
     c = await db_conn()
     rows = await c.fetch("select role,content from memory where user_id=$1 order by ts asc", uid)
@@ -95,7 +103,7 @@ async def get_memory(uid: int) -> List[Dict[str, str]]:
     s = 0
     out = []
     for m in reversed(hist):
-        s += len(enc.encode(m["content"]))
+        s += token_len(m["content"])
         out.append(m)
         if s > MEM_LIMIT:
             break
