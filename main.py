@@ -434,23 +434,38 @@ def routes_app():
     app.router.add_post("/tgwebhook", tg_webhook)
     return app
 
+from aiohttp import web
+from telegram import Update
+
+async def tg_webhook(request):
+    data = await request.json()
+    upd = Update.de_json(data, application.bot)
+    request.app.loop.create_task(application.process_update(upd))
+    return web.Response(text="ok")
+
+async def health(request):
+    return web.Response(text="ok")
+
 async def start_http():
-    global application
     await init_db()
+    global application
     application = build_app()
-    add_handlers(application)
     await application.initialize()
     await application.start()
-    aio = routes_app()
-    runner = web.AppRunner(aio)
-    await runner.setup()
-    site = web.TCPSite(runner, "0.0.0.0", int(os.getenv("PORT", 8080)))
-    await site.start()
-    if BASE_URL:
-        await application.bot.set_webhook(f"{BASE_URL}/tgwebhook", drop_pending_updates=True)
-    print("READY", flush=True)
-    print("WEBHOOK:", f"{BASE_URL}/tgwebhook", flush=True)
-    await asyncio.Event().wait()
+    app = web.Application()
+    app.router.add_get("/health", health)
+    app.router.add_post("/tgwebhook", tg_webhook)
+    base_url = BASE_URL.rstrip("/") if BASE_URL else ""
+    if base_url:
+        await application.bot.set_webhook(f"{base_url}/tgwebhook", drop_pending_updates=True)
+    return app
+
+def run():
+    loop = asyncio.new_event_loop()
+    asyncio.set_event_loop(loop)
+    aio_app = loop.run_until_complete(start_http())
+    port = int(os.getenv("PORT", PORT))
+    web.run_app(aio_app, host="0.0.0.0", port=port)
 
 if __name__ == "__main__":
-    asyncio.run(start_http())
+    run()
