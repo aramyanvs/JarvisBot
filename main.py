@@ -1,26 +1,31 @@
 import os
-from dotenv import load_dotenv
-from telegram.ext import Application
-from openai import OpenAI
-from handlers import register_handlers
+import asyncio
+from telegram.ext import Application, CommandHandler, MessageHandler, filters
+from handlers import start, help_command, handle_message
+from db import init_db, close_db
 
-load_dotenv()
-TELEGRAM_TOKEN = os.getenv("TELEGRAM_TOKEN")
-OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
-OPENAI_BASE_URL = os.getenv("OPENAI_BASE_URL", "")
-OPENAI_MODEL = os.getenv("OPENAI_MODEL", "gpt-4o-mini")
+async def main():
+    await init_db()
 
-if not TELEGRAM_TOKEN:
-    raise RuntimeError("TELEGRAM_TOKEN is not set")
-if not OPENAI_API_KEY:
-    raise RuntimeError("OPENAI_API_KEY is not set")
+    app = Application.builder().token(os.environ["TELEGRAM_BOT_TOKEN"]).build()
+    app.add_handler(CommandHandler("start", start))
+    app.add_handler(CommandHandler("help", help_command))
+    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
 
-client = OpenAI(api_key=OPENAI_API_KEY, base_url=OPENAI_BASE_URL) if OPENAI_BASE_URL else OpenAI(api_key=OPENAI_API_KEY)
+    webhook_url = os.getenv("WEBHOOK_URL")
+    port = int(os.getenv("PORT", "8080"))
 
-def main():
-    app = Application.builder().token(TELEGRAM_TOKEN).build()
-    register_handlers(app, client, OPENAI_MODEL)
-    app.run_polling(allowed_updates=None)
+    if webhook_url:
+        await app.bot.set_webhook(url=webhook_url)
+        await app.run_webhook(
+            listen="0.0.0.0",
+            port=port,
+            url_path=os.environ["TELEGRAM_BOT_TOKEN"],
+        )
+    else:
+        await app.run_polling()
+
+    await close_db()
 
 if __name__ == "__main__":
-    main()
+    asyncio.run(main())
