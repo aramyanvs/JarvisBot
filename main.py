@@ -1,32 +1,22 @@
 import os
-import asyncio
-from telegram.ext import Application, CommandHandler, MessageHandler, filters
+from telegram.ext import ApplicationBuilder, CommandHandler, MessageHandler, filters
 from handlers import start, help_command, handle_message
-from db import init_db, close_db
+from core import logger
 
-async def main():
-    await init_db()
+TOKEN = os.environ["TELEGRAM_TOKEN"]
+WEBHOOK_URL = os.getenv("WEBHOOK_URL")
+PORT = int(os.getenv("PORT", "8080"))
 
-    app = Application.builder().token(os.environ["TELEGRAM_BOT_TOKEN"]).build()
+def main():
+    app = ApplicationBuilder().token(TOKEN).build()
     app.add_handler(CommandHandler("start", start))
     app.add_handler(CommandHandler("help", help_command))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
 
-    webhook_url = os.getenv("WEBHOOK_URL")
-    port = int(os.getenv("PORT", "8080"))
-
-    if webhook_url:
-        await app.bot.set_webhook(url=webhook_url)
-        await app.run_webhook(
-            listen="0.0.0.0",
-            port=port,
-            url_path=os.environ["TELEGRAM_BOT_TOKEN"],
-        )
+    if WEBHOOK_URL:
+        app.run_webhook(webhook_url=WEBHOOK_URL, listen="0.0.0.0", port=PORT)
     else:
-        await app.run_polling()
-
-    await close_db()
+        app.run_polling()
 
 if __name__ == "__main__":
-    asyncio.run(main())
-
+    main()
