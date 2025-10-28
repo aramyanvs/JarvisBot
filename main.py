@@ -14,7 +14,12 @@ def main():
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
 
     if WEBHOOK_URL:
-        app.run_webhook(webhook_url=WEBHOOK_URL, listen="0.0.0.0", port=PORT)
+        app.run_webhook(
+    webhook_url=WEBHOOK_URL,
+    listen="0.0.0.0",
+    port=PORT,
+    url_path="tgwebhook"
+)
     else:
         app.run_polling()
 
