@@ -1,15 +1,16 @@
 from telegram import Update
 from telegram.ext import ContextTypes
-from main import get_user, generate_reply, logger
+from core import logger, get_user, generate_reply
 
-async def on_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    try:
-        uid = update.effective_user.id
-        text = (update.message.text or "").strip()
-        u = await get_user(uid)
-        reply = await generate_reply(text, u)
-        if reply:
-            await update.message.reply_text(reply)
-    except Exception as e:
-        logger.exception("on_text failed: %s", e)
-        await update.message.reply_text("Ошибка. Попробуй снова.")
+async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    await update.message.reply_text("Привет! Я живой.")
+
+async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    await update.message.reply_text("Напиши сообщение — отвечу тем же.")
+
+async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if not update.message:
+        return
+    user = await get_user(update.effective_user.id)
+    reply = await generate_reply(update.message.text, user["id"])
+    await update.message.reply_text(reply)
