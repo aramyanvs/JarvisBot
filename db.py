@@ -1,67 +1,44 @@
-import os, asyncpg, structlog
+import os, ssl
+import asyncpg
 
-logger = structlog.get_logger()
-DB_URL = os.getenv("DB_URL")
+DB_URL = os.environ["DB_URL"]
 _pool = None
 
 async def init_db():
     global _pool
-    _pool = await asyncpg.create_pool(DB_URL, min_size=1, max_size=5)
+    ssl_ctx = ssl.create_default_context() if "sslmode=require" in DB_URL or "aivencloud.com" in DB_URL else None
+    _pool = await asyncpg.create_pool(DB_URL, min_size=1, max_size=5, ssl=ssl_ctx)
     async with _pool.acquire() as c:
-        await c.execute("""
-        create table if not exists users(
+        await c.execute("""create table if not exists users(
             user_id bigint primary key,
             username text,
-            first_name text,
-            mode text default 'short'
+            full_name text,
+            created_at timestamptz default now(),
+            updated_at timestamptz default now()
         )""")
-        await c.execute("""
-        create table if not exists messages(
+        await c.execute("""create table if not exists messages(
             id bigserial primary key,
             user_id bigint references users(user_id) on delete cascade,
             role text not null,
             content text not null,
             created_at timestamptz default now()
         )""")
-        await c.execute("create index if not exists messages_user_idx on messages(user_id, created_at desc)")
-    logger.info("db_ready")
+        await c.execute("create index if not exists idx_messages_user_created on messages(user_id, created_at desc)")
 
-async def close_db():
-    global _pool
-    if _pool:
-        await _pool.close()
-        _pool = None
-
-async def ensure_user(tg_user):
+async def save_user(user_id: int, username: str, full_name: str):
     async with _pool.acquire() as c:
         await c.execute(
-            "insert into users(user_id, username, first_name) values($1,$2,$3) on conflict (user_id) do update set username=excluded.username, first_name=excluded.first_name",
-            tg_user.id, tg_user.username, tg_user.first_name or ""
+            """insert into users(user_id, username, full_name) values($1,$2,$3)
+               on conflict (user_id) do update set username=excluded.username, full_name=excluded.full_name, updated_at=now()""",
+            user_id, username, full_name
         )
 
 async def save_message(user_id: int, role: str, content: str):
     async with _pool.acquire() as c:
         await c.execute("insert into messages(user_id, role, content) values($1,$2,$3)", user_id, role, content)
 
-async def get_history(user_id: int, limit: int = 30):
+async def fetch_context(user_id: int, limit: int = 10) -> list[tuple[str, str]]:
     async with _pool.acquire() as c:
-        rows = await c.fetch("select role, content from messages where user_id=$1 order by created_at asc limit $2", user_id, limit)
-        return [(r["role"], r["content"]) for r in rows]
-
-async def reset_history(user_id: int):
-    async with _pool.acquire() as c:
-        await c.execute("delete from messages where user_id=$1", user_id)
-
-async def get_stats(user_id: int):
-    async with _pool.acquire() as c:
-        row = await c.fetchrow("select count(*) as cnt, coalesce(sum(length(content)),0) as chars from messages where user_id=$1", user_id)
-        return int(row["cnt"]), int(row["chars"])
-
-async def set_mode(user_id: int, mode: str):
-    async with _pool.acquire() as c:
-        await c.execute("update users set mode=$1 where user_id=$2", mode, user_id)
-
-async def get_mode(user_id: int) -> str:
-    async with _pool.acquire() as c:
-        row = await c.fetchrow("select mode from users where user_id=$1", user_id)
-        return row["mode"] if row and row["mode"] else "short"
+        rows = await c.fetch("select role, content from messages where user_id=$1 order by created_at desc limit $2", user_id, limit)
+        ordered = list(reversed([(r["role"], r["content"]) for r in rows]))
+        return ordered
