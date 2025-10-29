@@ -6,7 +6,7 @@ from db import save_user, save_message, fetch_context
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user = update.effective_user
     await save_user(user.id, user.username or "", user.full_name or "")
-    await update.message.reply_text("Привет! Я Джарвис. Пиши запрос или команду /web <url>.")
+    await update.message.reply_text("Здравствуйте, Сэр! На связи - Джарвис. Какие у нас планы сегодня?")
 
 async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text("Поддерживаю диалог с памятью. Команда: /web <url> — прочитать и кратко ответить.")
